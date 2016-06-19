@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from sklearn.linear_model import LogisticRegression
 from sklearn import metrics as metrics
 import sklearn.cross_validation as cv
+from sklearn.ensemble import RandomForestClassifier
 
 
 from flask import url_for
@@ -18,6 +19,14 @@ from flask import url_for
 
 def get_abs_path():
     return os.path.abspath(os.path.dirname(__file__))
+def binary(y):
+    b=y
+    for i in range(len(y)):
+        if y[i]==2:
+            b[i]=0
+        else:
+            b[i]=1
+    return b
 
 def get_data():
     f_name=os.path.join(get_abs_path(),'data','breast-cancer-wisconsin.csv')
@@ -97,29 +106,48 @@ def d3():
     cluster_data.to_csv(csv_path)
     return render_template('d3.html',data_file=url_for('static',filename='tmp2/kmeans.csv'))
 
+@app.route('/d3_2')
+def d3_2():
+    df=get_data()
+    X=df.ix[:, (df.columns !='class') & (df.columns !='code')].as_matrix() #this gives a numpy
+    scatter_data=pd.DataFrame(
+        {
+         'x':X[:,0],
+         'y':X[:,1],
+         'z':X[:,2]
+        }
+    )
+    csv_path=os.path.join(get_abs_path(),'static','tmp2','3D.csv')
+    scatter_data.to_csv(csv_path)
+    return render_template('d3_2.html',data=url_for('static',filename='tmp2/3D.csv'))
+
 @app.route('/prediction')
 def prediction():
     df=get_data()
     X=df.ix[:, (df.columns !='class') & (df.columns !='code')].as_matrix() #this gives a numpy
-    y=df.ix[:,df.columns=='class'].as_matrix()
+    print X
+    y1=df.ix[:,df.columns=='class'].as_matrix()
+    y=y1.reshape(683,1)
+    Y=binary(y)
     #split into test and training sets
-    features_train, features_test, outcome_train, outcome_test = cv.train_test_split(X, y, test_size=0.4,random_state=1)
 
-    #scale
-    scaler=preprocessing.StandardScaler().fit(features_train)
-    scaled_features_train=scaler.transform(features_train)
-    scaled_features_test = scaler.transform(features_test)
-    #Prediction using Logistic Regression
-    Logistic_Regression_Classifier=LogisticRegression()
-    Logistic_Regression_Classifier.fit(scaled_features_train,outcome_train)
-    predicted_labels=Logistic_Regression_Classifier.predict(scaled_features_test)
+    features_train, features_test, outcome_train, outcome_test = cv.train_test_split(X, Y, test_size=0.4,random_state=1)
+
+    #Random Forest Classifier
+    forest=RandomForestClassifier(n_estimators=10,min_samples_leaf= 10, criterion=
+    'gini', max_features= 'auto', max_depth= None)
+    forest=forest.fit(features_train,outcome_train)
+    predicted=forest.predict(features_test)
+
 
     #ROC Curve
     fig=plt.figure()
-    predicted_score=Logistic_Regression_Classifier.predict_proba(scaled_features_test)
-    fpr,tpr,_=metrics.roc_curve(outcome_test,predicted_score[:,1],pos_label=4)
+    predicted_score=forest.predict_proba(features_test)
+    print predicted_score
+    fpr,tpr,thresholds=metrics.roc_curve(outcome_test,predicted_score[:,1])
     roc_auc=metrics.auc(fpr,tpr)
-    plt.plot(fpr, tpr, label='ROC curve (area = %0.1f)' % roc_auc, lw=2, color ="#0000ff", marker='s',markerfacecolor="red")
+    print roc_auc
+    plt.plot(fpr, tpr, label='ROC curve (area = %0.1f)' % roc_auc, lw=2, color ="#0000ff")
     plt.plot([0, 1], [0, 1], 'k--')
     plt.xlim([-0.005, 1.0])
     plt.ylim([0.0, 1.005])
@@ -133,6 +161,38 @@ def prediction():
     fig.savefig(fig_path)
     return render_template('prediction.html',fig=url_for('static',filename='tmp2/roc.png'))
 
+@app.route('/api/v1/prediction_confusion_matrix')
+def prediction_confusion_matrix():
+    df=get_data()
+    X=df.ix[:, (df.columns !='class') & (df.columns !='code')].as_matrix() #this gives a numpy
+    print X
+    y1=df.ix[:,df.columns=='class'].as_matrix()
+    y=y1.reshape(683,1)
+    Y=binary(y)
+    #split into test and training sets
+
+    features_train, features_test, outcome_train, outcome_test = cv.train_test_split(X, Y, test_size=0.4,random_state=1)
+
+    #Random Forest Classifier for the classification.
+    forest=RandomForestClassifier(n_estimators=10,min_samples_leaf= 10, criterion=
+    'gini', max_features= 'auto', max_depth= None)
+    forest=forest.fit(features_train,outcome_train)
+    predicted=forest.predict(features_test)
+
+    #Confusion_matrix
+    confusion_matrix=metrics.confusion_matrix(outcome_test,predicted)
+
+    output ={
+          'Random Forest Classifier':
+
+          {
+            'fp':confusion_matrix[0][1],
+            'tp':confusion_matrix[1][1],
+            'fn':confusion_matrix[1][0],
+            'tn':confusion_matrix[0][0]
+          }
+    }
+    return jsonify(output)
 
 @app.route('/head')
 def head():
